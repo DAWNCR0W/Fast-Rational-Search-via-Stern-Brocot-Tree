@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fast Rational Search via Stern–Brocot Tree — Visual Explainer</title>
+  <link rel="stylesheet" href="assets/style.css" />
+
+  <!-- KaTeX: 수식 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+
+  <!-- D3: 시각화 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <script defer src="assets/data.js"></script>
+  <script defer src="assets/app.js"></script>
+</head>
+<body>
+  <header class="container hero">
+    <div class="hero-text">
+      <h1>Fast Rational Search<br/>via Stern–Brocot Tree</h1>
+      <p class="lead">
+        비교 쿼리 “β ≤ α?”만으로 미지의 유리수(또는 미지의 실수에 대한 최적 유리 근사)를 찾는 문제를,
+        Stern–Brocot 트리를 “압축(런-렝스) 탐색”하는 방식으로 해결. :contentReference[oaicite:6]{index=6}
+      </p>
+
+      <div class="pill-row">
+        <a class="pill" href="#tree">트리</a>
+        <a class="pill" href="#compressed">압축표현/연분수</a>
+        <a class="pill" href="#algo">알고리즘</a>
+        <a class="pill" href="#bounds">이론상한/하한</a>
+        <a class="pill" href="#experiments">실험</a>
+        <a class="pill" href="#approx">실수 근사</a>
+      </div>
+
+      <p class="meta">
+        arXiv:2512.18036 (Dec 2025), comparison-query model :contentReference[oaicite:7]{index=7}
+      </p>
+    </div>
+
+    <div class="hero-card">
+      <h2 class="card-title">논문 Figure 1(레벨 6까지)</h2>
+      <img class="img" src="assets/fig1.png" alt="Figure 1 screenshot" />
+      <p class="caption">
+        Stern–Brocot 트리는 mediant로 모든 기약 유리수를 정확히 1번씩 생성. :contentReference[oaicite:8]{index=8}
+      </p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="tree" class="section">
+      <h2>Stern–Brocot 트리: mediant와 BST 성질</h2>
+      <div class="grid2">
+        <div class="card">
+          <p class="small">
+            두 분수 a/b, c/d의 mediant는 (a+c)/(b+d)이고, 항상 그 사이에 위치합니다. :contentReference[oaicite:9]{index=9}
+            Stern–Brocot 트리는 이 규칙으로 (0,1)의 유리수를 BST처럼 탐색 가능하게 정렬합니다. :contentReference[oaicite:10]{index=10}
+          </p>
+          <div class="formula" data-tex="\\text{mediant}\\left(\\frac{a}{b},\\frac{c}{d}\\right)=\\frac{a+c}{b+d}"></div>
+        </div>
+
+        <div class="card">
+          <h3>인터랙티브: 유한 트리(깊이) 생성</h3>
+          <div class="controls">
+            <div class="control">
+              <label>Depth: <span id="depthVal"></span></label>
+              <input id="depth" type="range" min="2" max="9" value="6" />
+            </div>
+          </div>
+          <svg id="treeSvg" viewBox="0 0 900 360" aria-label="stern-brocot tree"></svg>
+          <p class="small muted">
+            “한 칸씩 내려가기(naive)”는 최악 O(n) 쿼리까지 늘어날 수 있어 비효율적임(예: 1/n). :contentReference[oaicite:11]{index=11}
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="compressed" class="section">
+      <h2>압축 경로 표현 ↔ Continued Fraction</h2>
+      <div class="grid2">
+        <div class="card">
+          <h3>압축 표현(런-렝스)</h3>
+          <p class="small">
+            경로를 L/R의 반복 블록으로 묶어 L^{x1} R^{x2} L^{x3} ... 형태로 표현. 예: 9/14는 LRLR^3. :contentReference[oaicite:12]{index=12}
+          </p>
+          <div class="formula" data-tex="\\alpha\\in(0,1)\\ \\Rightarrow\\ \\text{path}=L^{x_1}R^{x_2}L^{x_3}\\cdots D^{x_\\ell}"></div>
+        </div>
+
+        <div class="card">
+          <h3>연분수와의 연결(3.1)</h3>
+          <p class="small">
+            [0; a1,a2,...,ak] 연분수 계수들이 압축 경로의 블록 길이와 대응(마지막 블록은 ak−1로 조정). :contentReference[oaicite:13]{index=13}
+          </p>
+          <div class="controls">
+            <div class="control">
+              <label>목표 분수 a/b (0&lt;a&lt;b):</label>
+              <input id="fracInput" value="9/14" />
+              <button id="parseFracBtn">반영</button>
+            </div>
+          </div>
+          <div class="note" id="cfNote"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="algo" class="section">
+      <h2>알고리즘(Algorithm 1/2) — “압축 탐색”을 쿼리로 구현</h2>
+      <p class="hint">
+        핵심은 “블록 길이 x_i”를 한 칸씩 찾지 않고, 각 블록마다 <b>exponential search + binary search</b>로 찾는 것. :contentReference[oaicite:14]{index=14}
+      </p>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>Algorithm 1: Exponential Search (논문 스크린샷)</h3>
+          <img class="img" src="assets/algo.png" alt="Algorithm 1 and 2 screenshot" />
+          <p class="caption">Algorithm 1/2 전체 흐름. :contentReference[oaicite:15]{index=15}</p>
+        </div>
+
+        <div class="card">
+          <h3>쿼리 카운터(블록 단위)</h3>
+          <p class="small">
+            논문은 한 블록 길이 x에 대해 쿼리 수를 최대 <span class="mono">G(x)=2⌊log₂ x⌋+1</span>로 둡니다. :contentReference[oaicite:16]{index=16}
+          </p>
+          <div class="formula" data-tex="G(x)=2\\lfloor\\log_2 x\\rfloor+1"></div>
+
+          <div class="note" id="queryBreakdown"></div>
+          <svg id="blockChart" viewBox="0 0 640 220" aria-label="block query chart"></svg>
+        </div>
+      </div>
+    </section>
+
+    <section id="bounds" class="section">
+      <h2>이론 결과: 상한/하한 상수 비교</h2>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>Theorem 1 (최악 상한)</h3>
+          <p class="small">
+            denominator가 n인 미지의 α에 대해, 제안 알고리즘은 최악
+            <b>2.5849·log₂ n</b> 쿼리 이내(상수는 16/log₂ 73 근사)로 α를 찾는다고 증명. :contentReference[oaicite:17]{index=17}
+          </p>
+          <div class="formula" data-tex="\\#\\text{queries}\\ \\le\\ 2.5849\\,\\log_2 n"></div>
+        </div>
+
+        <div class="card">
+          <h3>하한 인스턴스 + 오픈 문제</h3>
+          <p class="small">
+            (L^8 R^1)^k 형태 인스턴스에서 최소
+            <b>2.4189·log₂ n</b> 쿼리가 필요함을 구성. 정확한 최악 복잡도는 open. :contentReference[oaicite:18]{index=18}
+          </p>
+          <div class="formula" data-tex="\\#\\text{queries}\\ \\ge\\ 2.4189\\,\\log_2 n"></div>
+
+          <div class="controls">
+            <div class="control">
+              <label>n (denominator scale): <span id="nScaleVal"></span></label>
+              <input id="nScale" type="range" min="10" max="1000000" step="10" value="1000" />
+            </div>
+          </div>
+          <div class="note" id="boundCompare"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="experiments" class="section">
+      <h2>실험: Kwek–Mehlhorn(KM) vs 제안 알고리즘</h2>
+      <p class="hint">
+        논문은 n ≤ 10^50까지 평균/최대 쿼리와 평균 시간을 비교(표 1/2). :contentReference[oaicite:19]{index=19}
+      </p>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>표 1/2 스크린샷</h3>
+          <img class="img" src="assets/table12.png" alt="Table 1 and 2 screenshot" />
+          <p class="caption">KM vs Compressed Stern–Brocot. :contentReference[oaicite:20]{index=20}</p>
+        </div>
+
+        <div class="card">
+          <h3>차트(데이터 내장)</h3>
+          <div class="controls">
+            <div class="control">
+              <label>Metric</label>
+              <select id="metricSel">
+                <option value="max">Max queries</option>
+                <option value="avg">Average queries</option>
+                <option value="time">Average time (s)</option>
+              </select>
+            </div>
+          </div>
+          <svg id="expChart" viewBox="0 0 720 260" aria-label="experiment chart"></svg>
+          <p class="small muted">
+            논문은 “worst-case 최적은 아니지만, 평균에서는 KM보다 적은 쿼리”를 보고. :contentReference[oaicite:21]{index=21}
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="approx" class="section">
+      <h2>미지의 실수 r에 대한 Best Rational Approximation</h2>
+      <p class="hint">
+        δ가 주어질 때, [r±δ] 안에서 분모가 최소인 유리 a/b를 비교 쿼리만으로 찾도록 알고리즘을 수정(3.4). :contentReference[oaicite:22]{index=22}
+      </p>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>설명(3.4 요지)</h3>
+          <p class="small">
+            각 블록 x를 찾은 뒤, “x 또는 x−1 위치의 분수가 [α±δ]에 들어오는지”를 추가 비교로 확인하고,
+            필요하면 1..x−1에서 한 번 더 binary search를 수행. :contentReference[oaicite:23]{index=23}
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Table 3: δ별 근사 결과</h3>
+          <img class="img" src="assets/table3.png" alt="Table 3 screenshot" />
+          <p class="caption">π, e, √2, √5에 대한 결과(논문 표 3). :contentReference[oaicite:24]{index=24}</p>
+
+          <div class="controls">
+            <div class="control">
+              <label>δ 선택</label>
+              <select id="deltaSel"></select>
+            </div>
+            <div class="control">
+              <label>대상 상수</label>
+              <select id="constSel">
+                <option value="pi">π</option>
+                <option value="e">e</option>
+                <option value="sqrt2">√2</option>
+                <option value="sqrt5">√5</option>
+              </select>
+            </div>
+          </div>
+          <div class="note" id="approxNote"></div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p class="small muted">
+        Figures/Tables are from the paper and used here for explanatory visualization. See the original arXiv PDF for details. :contentReference[oaicite:25]{index=25}
+      </p>
+    </footer>
+  </main>
+</body>
+</html>
